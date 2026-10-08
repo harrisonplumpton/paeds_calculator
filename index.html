@@ -193,6 +193,13 @@ input::placeholder{color:#B8B4A8;font-weight:500;}
 .vent-card .vt-note{font-size:11px;color:var(--ink-faint);margin-top:3px;line-height:1.4;}
 .vent-card .vt-range{font-size:11px;color:var(--ink-faint);margin-top:3px;}
 
+/* --- Obesity banner --- */
+.obesity-banner{background:var(--amber-soft);border:1.5px solid #ECD9AF;border-radius:12px;padding:12px 14px;font-size:12.5px;line-height:1.5;color:#6B4E15;margin-bottom:14px;}
+.obesity-banner strong{color:#5A4111;font-size:13px;}
+.obesity-banner .ob-detail{font-size:11.5px;margin-top:4px;color:#7A5720;}
+.dr-ibw-note{font-size:10.5px;color:var(--amber);font-weight:600;margin-top:2px;}
+.dr-actual-note{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
+
 /* --- Blood management --- */
 .blood-card{background:#fff8f8;border:1.5px solid #E3B9B9;border-radius:12px;padding:14px;margin-bottom:10px;}
 .blood-card.safe{background:var(--teal-soft);border-color:#CFE3DC;}
@@ -290,6 +297,9 @@ footer{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);}
         <div class="chip amber" id="chipEstH"><span class="lbl">Est. ht</span><span class="val" id="estHVal">—</span></div>
         <div class="chip" id="chipActW" style="display:none;"><span class="lbl">Actual wt</span><span class="val" id="actWVal">—</span></div>
         <div class="chip" id="chipActH" style="display:none;"><span class="lbl">Actual ht</span><span class="val" id="actHVal">—</span></div>
+        <div class="chip" id="chipBMI" style="display:none;"><span class="lbl">BMI</span><span class="val" id="bmiVal">—</span></div>
+        <div class="chip" id="chipIBW" style="display:none;"><span class="lbl">IBW</span><span class="val" id="ibwVal">—</span></div>
+        <div class="chip flag" id="chipObese" style="display:none;"><span class="lbl">⚠ Obesity</span><span class="val" id="obeseVal">—</span></div>
       </div>
 
       <div class="actual-fields">
@@ -397,6 +407,7 @@ footer{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);}
       <p><strong>Height estimation:</strong> Piecewise formula validated against WHO 50th centile data. 0 months: 50 cm; 1–12 months: 50 + months × 2.08 cm; 1–2 years: 75 + (months − 12) cm; 2–12 years: 87 + (years − 2) × 6.5 cm.</p>
       <p><strong>ETT size:</strong> Uncuffed: age/4 + 4 (rounded to nearest 0.5 mm). Cuffed: age/4 + 3.5. Oral depth: ID × 3 (&lt;1 year) or age/2 + 12 cm. Nasal depth: oral + 3 cm.</p>
       <p><strong>Drug doses:</strong> Drawn from BNFc, APLS 2016, and standard paediatric anaesthetic references. Where ranges are shown, dose is calculated at the midpoint for display — clinical judgement should be applied. Concentrations shown reflect standard preparations; local availability may vary.</p>
+      <p><strong>Ideal body weight (IBW):</strong> Traub SL &amp; Johnson CE formula: IBW (kg) = 2.396 × e^(0.01863 × height_cm), applicable for children aged ≥1 year. Obesity is flagged when actual weight ≥120% of IBW. When obesity is flagged, induction agents, opioids, NMBAs and paracetamol are dosed on IBW; suxamethonium uses actual weight (increased pseudocholinesterase); immediate sugammadex reversal uses actual weight. These are starting doses only — always titrate to clinical effect, particularly for opioids.</p>
       <p><strong>CVC insertion depths:</strong> Right IJV depth = height(cm) ÷ 10 − 1 cm (Andropoulos formula). Left IJV = height ÷ 10 + 1 cm. Femoral = weight(kg) + 5 cm (rough guide; verify with fluoroscopy or CXR).</p>
       <p><strong>Maintenance fluids (Holliday–Segar):</strong> First 10 kg at 4 mL/kg/hr; next 10 kg at 2 mL/kg/hr; each kg above 20 at 1 mL/kg/hr.</p>
       <p><strong>Minimum systolic BP:</strong> Neonate &gt;50 mmHg; children &gt;1 year: 70 + (2 × age) mmHg. These are minimum thresholds, not targets.</p>
@@ -450,6 +461,7 @@ function getPatient(){
   const estH = estimateHeight();
   const w = state.actualWeight ?? estW;
   const h = state.actualHeight ?? estH;
+  const obi = obesityInfo();
   return {
     ageMonths: m,
     ageYears: state.ageYears,
@@ -459,6 +471,10 @@ function getPatient(){
     estHeight: estH,
     weightIsEst: state.actualWeight === null,
     heightIsEst: state.actualHeight === null,
+    ibw: obi ? obi.ibw : null,
+    bmi: obi ? obi.bmi : null,
+    isObese: obi ? obi.isObese : false,
+    obeseRatio: obi ? obi.ratio : null,
   };
 }
 
@@ -482,7 +498,62 @@ function updateChips(){
   if(state.actualWeight !== null){ chipActW.style.display='flex'; document.getElementById('actWVal').textContent = state.actualWeight + ' kg'; } else { chipActW.style.display='none'; }
   if(state.actualHeight !== null){ chipActH.style.display='flex'; document.getElementById('actHVal').textContent = state.actualHeight + ' cm'; } else { chipActH.style.display='none'; }
 
+  // BMI, IBW, obesity chips
+  const obi = obesityInfo();
+  const chipBMI   = document.getElementById('chipBMI');
+  const chipIBW   = document.getElementById('chipIBW');
+  const chipObese = document.getElementById('chipObese');
+  if(obi && obi.bmi !== null){
+    chipBMI.style.display = 'flex';
+    chipBMI.className = 'chip' + (obi.isObese ? ' amber' : '');
+    document.getElementById('bmiVal').textContent = obi.bmi;
+    chipIBW.style.display = 'flex';
+    document.getElementById('ibwVal').textContent = obi.ibw + ' kg';
+    if(obi.isObese){
+      chipObese.style.display = 'flex';
+      document.getElementById('obeseVal').textContent = Math.round(obi.ratio * 100) + '% IBW';
+    } else {
+      chipObese.style.display = 'none';
+    }
+  } else {
+    chipBMI.style.display = 'none';
+    chipIBW.style.display = 'none';
+    chipObese.style.display = 'none';
+  }
+
   document.getElementById('neonateWarn').classList.toggle('show', m === 0 && ageEntered);
+}
+
+// ============================================================
+// OBESITY / IBW
+// ============================================================
+// Traub-Johnson formula: IBW (kg) = 2.396 × e^(0.01863 × height_cm)
+// Valid for children aged ≥1 year; based on 50th-centile weight-for-height.
+function calcIBW(){
+  const m = totalMonths();
+  if(m < 12) return null; // not applicable for infants
+  const h = state.actualHeight ?? estimateHeight();
+  if(h < 60 || h > 220) return null;
+  return Math.round(2.396 * Math.exp(0.01863 * h) * 10) / 10;
+}
+
+function calcBMI(){
+  const w = state.actualWeight;
+  const h = state.actualHeight ?? estimateHeight();
+  if(!w || h < 60 || h > 220) return null;
+  return Math.round((w / Math.pow(h / 100, 2)) * 10) / 10;
+}
+
+// Returns obesity info if actual weight ≥ 120% of IBW (i.e. ≥20% above IBW)
+function obesityInfo(){
+  const m = totalMonths();
+  if(m < 12) return null;
+  if(!state.actualWeight) return null;
+  const ibw = calcIBW();
+  if(!ibw || ibw <= 0) return null;
+  const bmi = calcBMI();
+  const ratio = state.actualWeight / ibw; // 1.2 = 120% → obese threshold
+  return { ibw, bmi, ratio, isObese: ratio >= 1.2 };
 }
 
 // ============================================================
@@ -709,110 +780,154 @@ function renderDrugs(p){
   const w = p.weight, m = p.ageMonths, y = p.ageYears;
   const wSrc = p.weightIsEst ? `est. ${p.estWeight} kg` : `actual ${w} kg`;
 
-  // Propofol
-  const propoMin = w * (m < 12 ? 2.5 : 2), propoMax = w * (m < 12 ? 4 : 3);
+  // Dosing weight logic:
+  // dw = IBW when obese (for most drugs); actual weight otherwise.
+  // sux always uses actual weight.
+  const obese = p.isObese && p.ibw;
+  const dw = obese ? p.ibw : w;  // dosing weight for IBW-appropriate drugs
+  const dwSrc = obese ? `IBW ${p.ibw} kg` : wSrc;
 
-  // Thiopentone
-  const thioMin = w * (m === 0 ? 2 : 4), thioMax = w * (m === 0 ? 4 : 7);
+  // Helper: "actual weight would give X mg" note for IBW-dosed drugs
+  function actualNote(doseActMin, doseActMax, unit){
+    if(!obese) return '';
+    const lo = r1(doseActMin), hi = r1(doseActMax);
+    return `<div class="dr-actual-note">Actual wt dose: ${lo === hi ? lo : lo+'–'+hi} ${unit}</div>`;
+  }
+  function actualNoteFixed(doseAct, unit){
+    if(!obese) return '';
+    return `<div class="dr-actual-note">Actual wt dose: ${r1(doseAct)} ${unit}</div>`;
+  }
+
+  // Obesity banner HTML
+  const obesityBanner = obese ? `
+    <div class="obesity-banner">
+      <strong>⚠ Obesity — IBW dosing active</strong>
+      <div class="ob-detail">
+        Actual weight ${w} kg · IBW ${p.ibw} kg · BMI ${p.bmi ?? '—'} · Weight ${Math.round(p.obeseRatio * 100)}% of IBW.<br>
+        Induction agents, opioids, NMBAs and paracetamol dosed on <strong>IBW (${p.ibw} kg)</strong>.
+        Suxamethonium and atropine use actual weight. Actual-weight dose shown in grey for reference.
+      </div>
+    </div>` : '';
+
+  // Propofol — dw (IBW if obese)
+  const propoMin = dw * (m < 12 ? 2.5 : 2), propoMax = dw * (m < 12 ? 4 : 3);
+  const propoActMin = w * (m < 12 ? 2.5 : 2), propoActMax = w * (m < 12 ? 4 : 3);
+
+  // Thiopentone — dw
+  const thioMin = dw * (m === 0 ? 2 : 4), thioMax = dw * (m === 0 ? 4 : 7);
+  const thioActMin = w * (m === 0 ? 2 : 4), thioActMax = w * (m === 0 ? 4 : 7);
   const thioVolMin = roundVol(thioMin / 25), thioVolMax = roundVol(thioMax / 25);
 
-  // Ketamine
-  const ketIVMin = r1(w * 1), ketIVMax = r1(w * 2);
+  // Ketamine — dw for IV; IM uses actual weight (less concern for fat distribution)
+  const ketIVMin = r1(dw * 1), ketIVMax = r1(dw * 2);
   const ketIMMin = r1(w * 6), ketIMMax = r1(w * 10);
 
-  // Fentanyl
-  const fentMin = r1(w * 1), fentMax = r1(w * 3);
+  // Fentanyl — dw (opioids don't distribute into fat)
+  const fentMin = r1(dw * 1), fentMax = r1(dw * 3);
+  const fentActMin = r1(w * 1), fentActMax = r1(w * 3);
   const fentVolMin = roundVol(fentMin / 50), fentVolMax = roundVol(fentMax / 50);
 
-  // Morphine
-  const morphMin = r1(w * 0.1), morphMax = r1(Math.min(w * 0.2, 15));
-  const morphCap = w * 0.2 > 15;
+  // Morphine — dw
+  const morphMin = r1(dw * 0.1), morphMax = r1(Math.min(dw * 0.2, 15));
+  const morphActMin = r1(w * 0.1), morphActMax = r1(Math.min(w * 0.2, 15));
+  const morphCap = dw * 0.2 > 15;
   const morphVolMin = roundVol(morphMin / 10), morphVolMax = roundVol(morphMax / 10);
 
-  // Alfentanil
-  const alfMin = r1(w * 10), alfMax = r1(w * 20);
+  // Alfentanil — dw
+  const alfMin = r1(dw * 10), alfMax = r1(dw * 20);
+  const alfActMin = r1(w * 10), alfActMax = r1(w * 20);
   const alfVolMin = roundVol(alfMin / 500), alfVolMax = roundVol(alfMax / 500);
 
-  // Suxamethonium
-  const suxDose = m < 12 ? w * 2 : w * 1.5;
+  // Suxamethonium — ALWAYS actual weight (increased pseudocholinesterase activity in obesity)
   const suxMin = m < 12 ? r1(w * 2) : r1(w * 1), suxMax = r1(m < 12 ? w * 2 : w * 1.5);
   const suxVol = roundVol(suxMax / 50);
 
-  // Rocuronium
-  const rocuIntub = r1(w * 0.6), rocuRSI = r1(w * 1.2);
+  // Rocuronium — dw (NMBAs don't distribute into fat)
+  const rocuIntub = r1(dw * 0.6), rocuRSI = r1(dw * 1.2);
+  const rocuActIntub = r1(w * 0.6), rocuActRSI = r1(w * 1.2);
   const rocuIntubVol = roundVol(rocuIntub / 10), rocuRSIVol = roundVol(rocuRSI / 10);
 
-  // Atracurium
-  const atraD = r1(w * 0.5), atraVol = roundVol(atraD / 10);
+  // Atracurium — dw
+  const atraD = r1(dw * 0.5), atraActD = r1(w * 0.5);
+  const atraVol = roundVol(atraD / 10);
 
-  // Neostigmine (max 2.5 mg)
-  const neoD = r1(Math.min(w * 0.05, 2.5));
-  const neoCap = w * 0.05 > 2.5;
+  // Neostigmine (max 2.5 mg) — dw
+  const neoD = r1(Math.min(dw * 0.05, 2.5));
+  const neoCap = dw * 0.05 > 2.5;
   const neoVol = roundVol(neoD / 2.5);
-  // Glycopyrrolate with neostigmine (10 mcg/kg, max 200 mcg)
-  const glycoD = Math.round(Math.min(w * 10, 200));
-  const glycoCap = w * 10 > 200;
+  // Glycopyrrolate with neostigmine (10 mcg/kg, max 200 mcg) — dw
+  const glycoD = Math.round(Math.min(dw * 10, 200));
+  const glycoCap = dw * 10 > 200;
   const glycoVol = roundVol(glycoD / 200);
 
-  // Sugammadex (Bridion 200 mg/2 mL = 100 mg/mL)
-  const sugaModerate = r1(w * 2), sugaDeep = r1(w * 4), sugaImmediate = r1(w * 16);
+  // Sugammadex — IBW for moderate/deep; actual weight for immediate reversal
+  const sugaModerate = r1(dw * 2), sugaDeep = r1(dw * 4);
+  const sugaImmediate = r1(w * 16); // always actual weight for immediate
   const sugaModVol = roundVol(sugaModerate / 100), sugaDeepVol = roundVol(sugaDeep / 100), sugaImmVol = roundVol(sugaImmediate / 100);
 
-  // Atropine (min 100 mcg, max 600 mcg)
+  // Atropine — actual weight (min 100 mcg, max 600 mcg)
   const atropD = Math.round(clamp(w * 20, 100, 600));
   const atropCap = w * 20 > 600;
   const atropVolMl = roundVol(atropD / 600);
 
-  // Paracetamol IV (< 10 kg: 7.5 mg/kg; else 15 mg/kg, max 1000 mg)
-  const paracDose = w < 10 ? r1(w * 7.5) : r1(Math.min(w * 15, 1000));
-  const paracCap = w >= 10 && w * 15 > 1000;
+  // Paracetamol IV — dw (< 10 kg: 7.5 mg/kg; else 15 mg/kg, max 1000 mg)
+  const paracDw = obese ? Math.min(dw, 50) : dw; // also cap at adult dose equivalents for large obese kids
+  const paracDose = paracDw < 10 ? r1(paracDw * 7.5) : r1(Math.min(paracDw * 15, 1000));
+  const paracActDose = w < 10 ? r1(w * 7.5) : r1(Math.min(w * 15, 1000));
+  const paracCap = paracDw >= 10 && paracDw * 15 > 1000;
   const paracVol = roundVol(paracDose / 10);
 
-  // Ondansetron (max 4 mg)
+  // Ondansetron (max 4 mg) — actual weight (well distributed)
   const ondanD = r1(Math.min(w * 0.1, 4));
   const ondanCap = w * 0.1 > 4;
   const ondanVol = roundVol(ondanD / 2);
 
-  // Dexamethasone (max 8 mg)
+  // Dexamethasone (max 8 mg) — actual weight (corticosteroids distribute widely)
   const dexaD = r1(Math.min(w * 0.15, 8));
   const dexaCap = w * 0.15 > 8;
   const dexaVol = roundVol(dexaD / 4);
 
-  // Midazolam
+  // Midazolam — dw for IV; oral premedication on actual weight
   const midazOral = r1(Math.min(w * 0.5, 15));
   const midazOralCap = w * 0.5 > 15;
-  const midazIVMin = r1(w * 0.05), midazIVMax = r1(w * 0.1);
+  const midazIVMin = r1(dw * 0.05), midazIVMax = r1(dw * 0.1);
+  const midazActIVMin = r1(w * 0.05), midazActIVMax = r1(w * 0.1);
 
   document.getElementById('drugsContent').innerHTML = `
+    ${obesityBanner}
     <div class="drug-group-label">Induction agents</div>
     <div class="drug-list">
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Propofol</span><span class="dr-route">IV</span>
-            <div class="dr-basis">${m < 12 ? '2.5–4' : '2–3'} mg/kg · 1% (10 mg/mL)${m < 12 ? ' — higher range for infants' : ''}</div>
+            <div class="dr-basis">${m < 12 ? '2.5–4' : '2–3'} mg/kg · 1% (10 mg/mL) · dosed on ${dwSrc}${m < 12 ? ' — higher range for infants' : ''}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — propofol does not distribute into fat</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${r1(propoMin)}–${r1(propoMax)}<span class="du">mg</span></div>
             <div class="dr-vol">${roundVol(propoMin/10)}–${roundVol(propoMax/10)} mL of 1%</div>
+            ${actualNote(propoActMin, propoActMax, 'mg')}
           </div>
         </div>
       </div>
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Thiopentone</span><span class="dr-route">IV</span>
-            <div class="dr-basis">${m === 0 ? '2–4' : '4–7'} mg/kg · 25 mg/mL${m === 0 ? ' — neonate dose range' : ''}</div>
+            <div class="dr-basis">${m === 0 ? '2–4' : '4–7'} mg/kg · 25 mg/mL · dosed on ${dwSrc}${m === 0 ? ' — neonate dose range' : ''}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing recommended</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${r1(thioMin)}–${r1(thioMax)}<span class="du">mg</span></div>
             <div class="dr-vol">${thioVolMin}–${thioVolMax} mL of 2.5%</div>
+            ${actualNote(thioActMin, thioActMax, 'mg')}
           </div>
         </div>
       </div>
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Ketamine</span><span class="dr-route">IV / IM</span>
-            <div class="dr-basis">IV: 1–2 mg/kg at 10 mg/mL (diluted) · IM: 6–10 mg/kg at 50 mg/mL</div>
-            <div class="dr-note">Maintain airway, have suction ready. Useful where IV access difficult.</div>
+            <div class="dr-basis">IV: 1–2 mg/kg (IBW) · IM: 6–10 mg/kg (actual wt) · IV diluted to 10 mg/mL · IM at 50 mg/mL</div>
+            <div class="dr-note">Maintain airway, have suction ready. Useful where IV access difficult.${obese ? ' IV dose on IBW; IM uses actual weight.' : ''}</div>
           </div>
           <div class="dr-right">
             <div class="dr-doses">
@@ -836,34 +951,40 @@ function renderDrugs(p){
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Fentanyl</span><span class="dr-route">IV</span>
-            <div class="dr-basis">1–3 mcg/kg · 50 mcg/mL</div>
+            <div class="dr-basis">1–3 mcg/kg · 50 mcg/mL · dosed on ${dwSrc}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — opioids do not distribute into adipose tissue</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${fentMin}–${fentMax}<span class="du">mcg</span></div>
             <div class="dr-vol">${fentVolMin}–${fentVolMax} mL of 50 mcg/mL</div>
+            ${actualNote(fentActMin, fentActMax, 'mcg')}
           </div>
         </div>
       </div>
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Morphine</span><span class="dr-route">IV</span>
-            <div class="dr-basis">0.1–0.2 mg/kg · 10 mg/mL · titrate carefully</div>
+            <div class="dr-basis">0.1–0.2 mg/kg · 10 mg/mL · titrate carefully · dosed on ${dwSrc}</div>
             ${morphCap ? '<div class="dr-cap">⚠ Capped at 15 mg maximum</div>' : ''}
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — titrate to effect</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${morphMin}–${morphMax}<span class="du">mg</span></div>
             <div class="dr-vol">${morphVolMin}–${morphVolMax} mL of 10 mg/mL</div>
+            ${actualNote(morphActMin, morphActMax, 'mg')}
           </div>
         </div>
       </div>
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Alfentanil</span><span class="dr-route">IV</span>
-            <div class="dr-basis">10–20 mcg/kg · 500 mcg/mL</div>
+            <div class="dr-basis">10–20 mcg/kg · 500 mcg/mL · dosed on ${dwSrc}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — poor adipose distribution</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${alfMin}–${alfMax}<span class="du">mcg</span></div>
             <div class="dr-vol">${alfVolMin}–${alfVolMax} mL of 500 mcg/mL</div>
+            ${actualNote(alfActMin, alfActMax, 'mcg')}
           </div>
         </div>
       </div>
@@ -874,7 +995,8 @@ function renderDrugs(p){
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Suxamethonium</span><span class="dr-route">IV</span>
-            <div class="dr-basis">${m < 12 ? '2 mg/kg (infant)' : '1–1.5 mg/kg'} · 50 mg/mL · IM: 4 mg/kg if no IV</div>
+            <div class="dr-basis">${m < 12 ? '2 mg/kg (infant)' : '1–1.5 mg/kg'} · 50 mg/mL · IM: 4 mg/kg if no IV · dosed on actual weight ${w} kg</div>
+            ${obese ? '<div class="dr-ibw-note">Actual weight used — increased pseudocholinesterase activity in obesity</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${suxMin}${suxMin !== suxMax ? '–'+suxMax : ''}<span class="du">mg</span></div>
@@ -885,7 +1007,8 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Rocuronium</span><span class="dr-route">IV</span>
-            <div class="dr-basis">Intubation: 0.6 mg/kg · RSI: 1.2 mg/kg · 10 mg/mL</div>
+            <div class="dr-basis">Intubation: 0.6 mg/kg · RSI: 1.2 mg/kg · 10 mg/mL · dosed on ${dwSrc}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — NMBAs do not distribute into adipose tissue</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-doses">
@@ -893,17 +1016,20 @@ function renderDrugs(p){
               <div class="dr-dose-line"><span class="dr-dose-lbl">RSI</span><span class="dr-dose">${rocuRSI}<span class="du">mg</span></span></div>
             </div>
             <div class="dr-vol" style="text-align:right;">${rocuIntubVol} / ${rocuRSIVol} mL of 10 mg/mL</div>
+            ${obese ? `<div class="dr-actual-note">Actual wt: ${rocuActIntub} / ${rocuActRSI} mg</div>` : ''}
           </div>
         </div>
       </div>
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Atracurium</span><span class="dr-route">IV</span>
-            <div class="dr-basis">0.5 mg/kg · 10 mg/mL</div>
+            <div class="dr-basis">0.5 mg/kg · 10 mg/mL · dosed on ${dwSrc}</div>
+            ${obese ? '<div class="dr-ibw-note">IBW dosing</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${atraD}<span class="du">mg</span></div>
             <div class="dr-vol">${atraVol} mL of 10 mg/mL</div>
+            ${actualNoteFixed(atraActD, 'mg')}
           </div>
         </div>
       </div>
@@ -914,7 +1040,7 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Neostigmine + Glycopyrrolate</span><span class="dr-route">IV</span>
-            <div class="dr-basis">Neo: 50 mcg/kg (max 2.5 mg) · Glyco: 10 mcg/kg (max 200 mcg)</div>
+            <div class="dr-basis">Neo: 50 mcg/kg (max 2.5 mg) · Glyco: 10 mcg/kg (max 200 mcg) · dosed on ${dwSrc}</div>
             ${neoCap ? '<div class="dr-cap">⚠ Neostigmine capped at 2.5 mg</div>' : ''}
             ${glycoCap ? '<div class="dr-cap">⚠ Glycopyrrolate capped at 200 mcg</div>' : ''}
           </div>
@@ -929,7 +1055,8 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Sugammadex</span><span class="dr-route">IV</span>
-            <div class="dr-basis">Moderate: 2 mg/kg · Deep: 4 mg/kg · Immediate: 16 mg/kg · 100 mg/mL</div>
+            <div class="dr-basis">Moderate/deep: dosed on ${dwSrc} · Immediate reversal: actual weight (${w} kg) · 100 mg/mL</div>
+            ${obese ? '<div class="dr-ibw-note">IBW for routine reversal; actual weight for immediate (rocuronium RSI reversal)</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-doses">
@@ -948,7 +1075,7 @@ function renderDrugs(p){
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Atropine</span><span class="dr-route">IV</span>
-            <div class="dr-basis">20 mcg/kg · 600 mcg/mL · min 100 mcg, max 600 mcg</div>
+            <div class="dr-basis">20 mcg/kg · 600 mcg/mL · min 100 mcg, max 600 mcg · actual weight ${w} kg</div>
             ${atropCap ? '<div class="dr-cap">⚠ Capped at 600 mcg</div>' : atropD === 100 ? '<div class="dr-cap">↑ Minimum dose applied (100 mcg)</div>' : ''}
           </div>
           <div class="dr-right">
@@ -960,12 +1087,14 @@ function renderDrugs(p){
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Paracetamol</span><span class="dr-route">IV</span>
-            <div class="dr-basis">${w < 10 ? '7.5 mg/kg (&lt;10 kg)' : '15 mg/kg'} · 10 mg/mL · max 1000 mg</div>
+            <div class="dr-basis">${paracDw < 10 ? '7.5 mg/kg (&lt;10 kg)' : '15 mg/kg'} · 10 mg/mL · max 1000 mg · dosed on ${dwSrc}</div>
             ${paracCap ? '<div class="dr-cap">⚠ Capped at 1000 mg</div>' : ''}
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — avoid hepatotoxic overdose in obesity</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-dose">${paracDose}<span class="du">mg</span></div>
             <div class="dr-vol">${paracVol} mL of 10 mg/mL</div>
+            ${actualNoteFixed(paracActDose, 'mg')}
           </div>
         </div>
       </div>
@@ -996,19 +1125,21 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Midazolam</span><span class="dr-route">Oral / IV</span>
-            <div class="dr-basis">Oral (premedication): 0.5 mg/kg (max 15 mg) · IV: 0.05–0.1 mg/kg</div>
+            <div class="dr-basis">Oral: 0.5 mg/kg (max 15 mg) actual wt · IV: 0.05–0.1 mg/kg · IV dosed on ${dwSrc}</div>
             ${midazOralCap ? '<div class="dr-cap">⚠ Oral dose capped at 15 mg</div>' : ''}
+            ${obese ? '<div class="dr-ibw-note">IV dose on IBW — benzodiazepines have limited adipose distribution</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-doses">
               <div class="dr-dose-line"><span class="dr-dose-lbl">Oral</span><span class="dr-dose">${midazOral}<span class="du">mg</span></span></div>
               <div class="dr-dose-line"><span class="dr-dose-lbl">IV</span><span class="dr-dose">${midazIVMin}–${midazIVMax}<span class="du">mg</span></span></div>
             </div>
+            ${obese ? `<div class="dr-actual-note">IV actual wt: ${midazActIVMin}–${midazActIVMax} mg</div>` : ''}
           </div>
         </div>
       </div>
     </div>
-    <div class="airway-note" style="margin-top:14px;">All doses calculated from ${wSrc}. Concentrations shown are common preparations — confirm local availability. These are starting doses; titrate to clinical effect.</div>
+    <div class="airway-note" style="margin-top:14px;">Doses calculated from ${obese ? `IBW (${p.ibw} kg) for weight-dependent drugs; actual weight (${w} kg) for suxamethonium and atropine` : wSrc}. Concentrations shown are common preparations — confirm local availability. These are starting doses; titrate to clinical effect.</div>
   `;
 }
 
