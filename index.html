@@ -200,6 +200,13 @@ input::placeholder{color:#B8B4A8;font-weight:500;}
 .dr-ibw-note{font-size:10.5px;color:var(--amber);font-weight:600;margin-top:2px;}
 .dr-actual-note{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
 
+/* --- Dose selector pills --- */
+.dose-pills{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;}
+.dose-pill{border:1.5px solid var(--teal);background:transparent;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--teal);cursor:pointer;transition:all 0.12s ease;font-family:var(--sans);-webkit-appearance:none;}
+.dose-pill.active{background:var(--teal);color:#fff;}
+.dose-pill:active{transform:scale(0.95);}
+.dose-pills-label{font-size:10.5px;color:var(--ink-faint);font-weight:600;margin-top:7px;margin-bottom:2px;}
+
 /* --- Blood management --- */
 .blood-card{background:#fff8f8;border:1.5px solid #E3B9B9;border-radius:12px;padding:14px;margin-bottom:10px;}
 .blood-card.safe{background:var(--teal-soft);border-color:#CFE3DC;}
@@ -432,6 +439,13 @@ footer{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);}
 // STATE
 // ============================================================
 const state = { ageYears:0, ageMonths:0, actualWeight:null, actualHeight:null, startHb:null, minHb:null };
+
+// Per-drug dose variant selections (persists across re-renders)
+const drugState = {
+  dexaDose:    0.15,   // mg/kg — 0.15 or 0.2
+  paracMode:   'auto', // 'auto' | '7.5' | '15'
+  midazPODose: 0.5,    // mg/kg — 0.25 or 0.5
+};
 
 // ============================================================
 // PATIENT FORMULAS
@@ -780,14 +794,10 @@ function renderDrugs(p){
   const w = p.weight, m = p.ageMonths, y = p.ageYears;
   const wSrc = p.weightIsEst ? `est. ${p.estWeight} kg` : `actual ${w} kg`;
 
-  // Dosing weight logic:
-  // dw = IBW when obese (for most drugs); actual weight otherwise.
-  // sux always uses actual weight.
   const obese = p.isObese && p.ibw;
-  const dw = obese ? p.ibw : w;  // dosing weight for IBW-appropriate drugs
+  const dw = obese ? p.ibw : w;
   const dwSrc = obese ? `IBW ${p.ibw} kg` : wSrc;
 
-  // Helper: "actual weight would give X mg" note for IBW-dosed drugs
   function actualNote(doseActMin, doseActMax, unit){
     if(!obese) return '';
     const lo = r1(doseActMin), hi = r1(doseActMax);
@@ -798,7 +808,6 @@ function renderDrugs(p){
     return `<div class="dr-actual-note">Actual wt dose: ${r1(doseAct)} ${unit}</div>`;
   }
 
-  // Obesity banner HTML
   const obesityBanner = obese ? `
     <div class="obesity-banner">
       <strong>⚠ Obesity — IBW dosing active</strong>
@@ -809,92 +818,199 @@ function renderDrugs(p){
       </div>
     </div>` : '';
 
-  // Propofol — dw (IBW if obese)
+  // ---- PREMEDICATION ----
+  const midazPODose = drugState.midazPODose; // 0.25 or 0.5 mg/kg
+  const midazPO = r1(Math.min(w * midazPODose, 15));
+  const midazPOCap = w * midazPODose > 15;
+  const midazBuccal = r1(Math.min(w * 0.3, 10));
+  const midazBuccalCap = w * 0.3 > 10;
+  const midazBuccalVol = roundVol(midazBuccal / 5); // 5 mg/mL IV prep given buccally
+  // Dexmedetomidine intranasal 4 mcg/kg (using 200 mcg/2mL = 100 mcg/mL)
+  const dexmedD = r1(Math.min(w * 4, 100));
+  const dexmedCap = w * 4 > 100;
+  const dexmedVol = roundVol(dexmedD / 100); // 100 mcg/mL
+  // Ketamine premedication: PO 5–8 mg/kg, IM 4–5 mg/kg
+  const ketPOMin = r1(w * 5), ketPOMax = r1(w * 8);
+  const ketPOComboMin = r1(w * 3); // 3 mg/kg when combined with midaz
+  const ketIMPremMin = r1(w * 4), ketIMPremMax = r1(w * 5);
+  // Temazepam — 12–18 years only (age ≥ 144 months)
+  const showTemazepam = m >= 144;
+
+  // ---- INDUCTION ----
   const propoMin = dw * (m < 12 ? 2.5 : 2), propoMax = dw * (m < 12 ? 4 : 3);
   const propoActMin = w * (m < 12 ? 2.5 : 2), propoActMax = w * (m < 12 ? 4 : 3);
-
-  // Thiopentone — dw
   const thioMin = dw * (m === 0 ? 2 : 4), thioMax = dw * (m === 0 ? 4 : 7);
   const thioActMin = w * (m === 0 ? 2 : 4), thioActMax = w * (m === 0 ? 4 : 7);
   const thioVolMin = roundVol(thioMin / 25), thioVolMax = roundVol(thioMax / 25);
-
-  // Ketamine — dw for IV; IM uses actual weight (less concern for fat distribution)
+  // Ketamine IV induction: 1–2 mg/kg; IM induction: 4–5 mg/kg
   const ketIVMin = r1(dw * 1), ketIVMax = r1(dw * 2);
-  const ketIMMin = r1(w * 6), ketIMMax = r1(w * 10);
+  const ketIMMin = r1(w * 4), ketIMMax = r1(w * 5);
 
-  // Fentanyl — dw (opioids don't distribute into fat)
-  const fentMin = r1(dw * 1), fentMax = r1(dw * 3);
-  const fentActMin = r1(w * 1), fentActMax = r1(w * 3);
+  // ---- OPIOIDS ----
+  // Fentanyl max 2 mcg/kg
+  const fentMin = r1(dw * 1), fentMax = r1(dw * 2);
+  const fentActMin = r1(w * 1), fentActMax = r1(w * 2);
   const fentVolMin = roundVol(fentMin / 50), fentVolMax = roundVol(fentMax / 50);
-
-  // Morphine — dw
   const morphMin = r1(dw * 0.1), morphMax = r1(Math.min(dw * 0.2, 15));
   const morphActMin = r1(w * 0.1), morphActMax = r1(Math.min(w * 0.2, 15));
   const morphCap = dw * 0.2 > 15;
   const morphVolMin = roundVol(morphMin / 10), morphVolMax = roundVol(morphMax / 10);
-
-  // Alfentanil — dw
   const alfMin = r1(dw * 10), alfMax = r1(dw * 20);
   const alfActMin = r1(w * 10), alfActMax = r1(w * 20);
   const alfVolMin = roundVol(alfMin / 500), alfVolMax = roundVol(alfMax / 500);
 
-  // Suxamethonium — ALWAYS actual weight (increased pseudocholinesterase activity in obesity)
+  // ---- ANALGESIA ----
+  // Paracetamol IV — dose-selector driven
+  const paracDw = obese ? Math.min(dw, 50) : dw;
+  let paracPerKg, paracLabel;
+  if(drugState.paracMode === '7.5'){ paracPerKg = 7.5; paracLabel = '7.5 mg/kg (selected)'; }
+  else if(drugState.paracMode === '15'){ paracPerKg = 15; paracLabel = '15 mg/kg (selected)'; }
+  else { // auto
+    paracPerKg = paracDw < 10 ? 7.5 : 15;
+    paracLabel = paracDw < 10 ? '7.5 mg/kg (wt <10 kg)' : '15 mg/kg';
+  }
+  const paracDose = r1(Math.min(paracDw * paracPerKg, 1000));
+  const paracActDose = r1(Math.min(w * paracPerKg, 1000));
+  const paracCap = paracDw * paracPerKg > 1000;
+  const paracVol = roundVol(paracDose / 10);
+  // Ibuprofen PO (5–8 mg/kg, max 400 mg)
+  const ibuMin = r1(Math.min(w * 5, 400)), ibuMax = r1(Math.min(w * 8, 400));
+  const ibuCapMin = w * 5 > 400, ibuCapMax = w * 8 > 400;
+  // Parecoxib IV (0.5–1 mg/kg, max 40 mg) — 20 mg/mL after reconstitution
+  const parecMin = r1(Math.min(w * 0.5, 40)), parecMax = r1(Math.min(w * 1, 40));
+  const parecCapMax = w * 1 > 40;
+  const parecVolMin = roundVol(parecMin / 20), parecVolMax = roundVol(parecMax / 20);
+  // Ketorolac IV (0.5 mg/kg, max 15 mg) — 30 mg/mL
+  const ketoD = r1(Math.min(w * 0.5, 15));
+  const ketoCap = w * 0.5 > 15;
+  const ketoVol = roundVol(ketoD / 30);
+
+  // ---- MUSCLE RELAXANTS ----
   const suxMin = m < 12 ? r1(w * 2) : r1(w * 1), suxMax = r1(m < 12 ? w * 2 : w * 1.5);
   const suxVol = roundVol(suxMax / 50);
-
-  // Rocuronium — dw (NMBAs don't distribute into fat)
   const rocuIntub = r1(dw * 0.6), rocuRSI = r1(dw * 1.2);
   const rocuActIntub = r1(w * 0.6), rocuActRSI = r1(w * 1.2);
   const rocuIntubVol = roundVol(rocuIntub / 10), rocuRSIVol = roundVol(rocuRSI / 10);
-
-  // Atracurium — dw
   const atraD = r1(dw * 0.5), atraActD = r1(w * 0.5);
   const atraVol = roundVol(atraD / 10);
 
-  // Neostigmine (max 2.5 mg) — dw
-  const neoD = r1(Math.min(dw * 0.05, 2.5));
+  // ---- REVERSAL ----
+  // Neostigmine 50–70 mcg/kg (max 2.5 mg)
+  const neoMin = r1(Math.min(dw * 0.05, 2.5)), neoMax = r1(Math.min(dw * 0.07, 2.5));
   const neoCap = dw * 0.05 > 2.5;
-  const neoVol = roundVol(neoD / 2.5);
-  // Glycopyrrolate with neostigmine (10 mcg/kg, max 200 mcg) — dw
-  const glycoD = Math.round(Math.min(dw * 10, 200));
-  const glycoCap = dw * 10 > 200;
+  const neoVolMin = roundVol(neoMin / 2.5), neoVolMax = roundVol(neoMax / 2.5);
+  // Glycopyrrolate 4 mcg/kg (max 200 mcg)
+  const glycoD = Math.round(Math.min(dw * 4, 200));
+  const glycoCap = dw * 4 > 200;
   const glycoVol = roundVol(glycoD / 200);
-
-  // Sugammadex — IBW for moderate/deep; actual weight for immediate reversal
   const sugaModerate = r1(dw * 2), sugaDeep = r1(dw * 4);
-  const sugaImmediate = r1(w * 16); // always actual weight for immediate
+  const sugaImmediate = r1(w * 16);
   const sugaModVol = roundVol(sugaModerate / 100), sugaDeepVol = roundVol(sugaDeep / 100), sugaImmVol = roundVol(sugaImmediate / 100);
 
-  // Atropine — actual weight (min 100 mcg, max 600 mcg)
+  // ---- PERIOPERATIVE ----
   const atropD = Math.round(clamp(w * 20, 100, 600));
   const atropCap = w * 20 > 600;
   const atropVolMl = roundVol(atropD / 600);
-
-  // Paracetamol IV — dw (< 10 kg: 7.5 mg/kg; else 15 mg/kg, max 1000 mg)
-  const paracDw = obese ? Math.min(dw, 50) : dw; // also cap at adult dose equivalents for large obese kids
-  const paracDose = paracDw < 10 ? r1(paracDw * 7.5) : r1(Math.min(paracDw * 15, 1000));
-  const paracActDose = w < 10 ? r1(w * 7.5) : r1(Math.min(w * 15, 1000));
-  const paracCap = paracDw >= 10 && paracDw * 15 > 1000;
-  const paracVol = roundVol(paracDose / 10);
-
-  // Ondansetron (max 4 mg) — actual weight (well distributed)
   const ondanD = r1(Math.min(w * 0.1, 4));
   const ondanCap = w * 0.1 > 4;
   const ondanVol = roundVol(ondanD / 2);
-
-  // Dexamethasone (max 8 mg) — actual weight (corticosteroids distribute widely)
-  const dexaD = r1(Math.min(w * 0.15, 8));
-  const dexaCap = w * 0.15 > 8;
+  // Dexamethasone — dose-selector driven
+  const dexaPerKg = drugState.dexaDose;
+  const dexaD = r1(Math.min(w * dexaPerKg, 8));
+  const dexaCap = w * dexaPerKg > 8;
   const dexaVol = roundVol(dexaD / 4);
-
-  // Midazolam — dw for IV; oral premedication on actual weight
-  const midazOral = r1(Math.min(w * 0.5, 15));
-  const midazOralCap = w * 0.5 > 15;
+  // Midazolam IV — dw
   const midazIVMin = r1(dw * 0.05), midazIVMax = r1(dw * 0.1);
   const midazActIVMin = r1(w * 0.05), midazActIVMax = r1(w * 0.1);
 
+  // ---- ANTIBIOTICS ----
+  // Piperacillin-Tazobactam 90 mg/kg (max 4500 mg = 4.5g), 45 mg/mL (4.5g in 100 mL)
+  const pipTazD = Math.round(Math.min(w * 90, 4500));
+  const pipTazCap = w * 90 > 4500;
+  // Co-Amoxiclav IV 30 mg/kg amoxicillin component (max 1000 mg), 60 mg/mL (1.2g in 20 mL)
+  const coAmoxD = Math.round(Math.min(w * 30, 1000));
+  const coAmoxCap = w * 30 > 1000;
+  const coAmoxVol = roundVol(coAmoxD / 60);
+
   document.getElementById('drugsContent').innerHTML = `
     ${obesityBanner}
+
+    <div class="drug-group-label">Premedication</div>
+    <div class="drug-list">
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Midazolam</span><span class="dr-route">PO pre-med</span>
+            <div class="dr-basis">${midazPODose} mg/kg (IV preparation given orally) · max 15 mg · onset 30–45 min</div>
+            ${midazPOCap ? '<div class="dr-cap">⚠ Capped at 15 mg</div>' : ''}
+            <div class="dose-pills-label">Dose:</div>
+            <div class="dose-pills">
+              <button class="dose-pill ${drugState.midazPODose===0.25?'active':''}" data-drug="midazPO" data-dose="0.25">0.25 mg/kg</button>
+              <button class="dose-pill ${drugState.midazPODose===0.5?'active':''}" data-drug="midazPO" data-dose="0.5">0.5 mg/kg</button>
+            </div>
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${midazPO}<span class="du">mg</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Midazolam</span><span class="dr-route">Buccal</span>
+            <div class="dr-basis">0.3 mg/kg · 5 mg/mL (IV prep) given buccally · max 10 mg · onset 20 min, duration 30–45 min</div>
+            ${midazBuccalCap ? '<div class="dr-cap">⚠ Capped at 10 mg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${midazBuccal}<span class="du">mg</span></div>
+            <div class="dr-vol">${midazBuccalVol} mL of 5 mg/mL</div>
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Dexmedetomidine</span><span class="dr-route">Intranasal</span>
+            <div class="dr-basis">4 mcg/kg · 100 mcg/mL · max 100 mcg · onset 25–45 min</div>
+            ${dexmedCap ? '<div class="dr-cap">⚠ Capped at 100 mcg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${dexmedD}<span class="du">mcg</span></div>
+            <div class="dr-vol">${dexmedVol} mL of 100 mcg/mL</div>
+          </div>
+        </div>
+      </div>
+      ${showTemazepam ? `
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Temazepam</span><span class="dr-route">PO</span>
+            <div class="dr-basis">10–20 mg fixed dose · 12–18 years only · onset 60 min, duration up to 140 min</div>
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">10–20<span class="du">mg</span></div>
+          </div>
+        </div>
+      </div>` : ''}
+      <div class="drug-row multi">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Ketamine</span><span class="dr-route">PO / IM pre-med</span>
+            <div class="dr-basis">PO: 5–8 mg/kg (or 3 mg/kg with midazolam) · IM: 4–5 mg/kg · onset 15 min, duration ≈3 hr</div>
+            <div class="dr-note">Caution: salivation, emergence delirium, PONV. Have suction available.</div>
+          </div>
+          <div class="dr-right">
+            <div class="dr-doses">
+              <div class="dr-dose-line"><span class="dr-dose-lbl">PO</span><span class="dr-dose">${ketPOMin}–${ketPOMax}<span class="du">mg</span></span></div>
+              <div class="dr-dose-line"><span class="dr-dose-lbl">PO+MDZ</span><span class="dr-dose">${ketPOComboMin}<span class="du">mg</span></span></div>
+              <div class="dr-dose-line"><span class="dr-dose-lbl">IM</span><span class="dr-dose">${ketIMPremMin}–${ketIMPremMax}<span class="du">mg</span></span></div>
+            </div>
+            <div class="dr-vol" style="text-align:right;">IM: ${roundVol(ketIMPremMin/50)}–${roundVol(ketIMPremMax/50)} mL of 50 mg/mL</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="drug-group-label">Induction agents</div>
     <div class="drug-list">
       <div class="drug-row">
@@ -926,8 +1042,8 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Ketamine</span><span class="dr-route">IV / IM</span>
-            <div class="dr-basis">IV: 1–2 mg/kg (IBW) · IM: 6–10 mg/kg (actual wt) · IV diluted to 10 mg/mL · IM at 50 mg/mL</div>
-            <div class="dr-note">Maintain airway, have suction ready. Useful where IV access difficult.${obese ? ' IV dose on IBW; IM uses actual weight.' : ''}</div>
+            <div class="dr-basis">IV: 1–2 mg/kg · IM: 4–5 mg/kg · IV diluted to 10 mg/mL · IM at 50 mg/mL · dosed on ${dwSrc}</div>
+            <div class="dr-note">Maintain airway, have suction ready. Onset 15 min (IM), duration ≈3 hr.${obese ? ' IV dose on IBW.' : ''}</div>
           </div>
           <div class="dr-right">
             <div class="dr-doses">
@@ -951,7 +1067,7 @@ function renderDrugs(p){
       <div class="drug-row">
         <div class="dr-top">
           <div><span class="dr-name">Fentanyl</span><span class="dr-route">IV</span>
-            <div class="dr-basis">1–3 mcg/kg · 50 mcg/mL · dosed on ${dwSrc}</div>
+            <div class="dr-basis">1–2 mcg/kg · 50 mcg/mL · dosed on ${dwSrc} · max 2 mcg/kg</div>
             ${obese ? '<div class="dr-ibw-note">IBW dosing — opioids do not distribute into adipose tissue</div>' : ''}
           </div>
           <div class="dr-right">
@@ -985,6 +1101,69 @@ function renderDrugs(p){
             <div class="dr-dose">${alfMin}–${alfMax}<span class="du">mcg</span></div>
             <div class="dr-vol">${alfVolMin}–${alfVolMax} mL of 500 mcg/mL</div>
             ${actualNote(alfActMin, alfActMax, 'mcg')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="drug-group-label">Analgesia</div>
+    <div class="drug-list">
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Paracetamol</span><span class="dr-route">IV</span>
+            <div class="dr-basis">${paracLabel} · 10 mg/mL · max 1000 mg · dosed on ${dwSrc}</div>
+            ${paracCap ? '<div class="dr-cap">⚠ Capped at 1000 mg</div>' : ''}
+            ${obese ? '<div class="dr-ibw-note">IBW dosing — avoid hepatotoxic overdose in obesity</div>' : ''}
+            <div class="dose-pills-label">Dose:</div>
+            <div class="dose-pills">
+              <button class="dose-pill ${drugState.paracMode==='auto'?'active':''}" data-drug="parac" data-dose="auto">Auto</button>
+              <button class="dose-pill ${drugState.paracMode==='7.5'?'active':''}" data-drug="parac" data-dose="7.5">7.5 mg/kg</button>
+              <button class="dose-pill ${drugState.paracMode==='15'?'active':''}" data-drug="parac" data-dose="15">15 mg/kg</button>
+            </div>
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${paracDose}<span class="du">mg</span></div>
+            <div class="dr-vol">${paracVol} mL of 10 mg/mL</div>
+            ${actualNoteFixed(paracActDose, 'mg')}
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Ibuprofen</span><span class="dr-route">PO</span>
+            <div class="dr-basis">5–8 mg/kg · max 400 mg · with or after food</div>
+            ${ibuCapMax ? '<div class="dr-cap">⚠ Capped at 400 mg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${ibuMin}–${ibuMax}<span class="du">mg</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Parecoxib</span><span class="dr-route">IV</span>
+            <div class="dr-basis">0.5–1 mg/kg · 20 mg/mL (reconstituted) · max 40 mg · ≥1 year</div>
+            ${parecCapMax ? '<div class="dr-cap">⚠ Capped at 40 mg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${parecMin}–${parecMax}<span class="du">mg</span></div>
+            <div class="dr-vol">${parecVolMin}–${parecVolMax} mL of 20 mg/mL</div>
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div>
+            <span class="dr-name">Ketorolac</span><span class="dr-route">IV</span>
+            <div class="dr-basis">0.5 mg/kg · 30 mg/mL · max 15 mg · ≥16 years or specialist use</div>
+            ${ketoCap ? '<div class="dr-cap">⚠ Capped at 15 mg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${ketoD}<span class="du">mg</span></div>
+            <div class="dr-vol">${ketoVol} mL of 30 mg/mL</div>
           </div>
         </div>
       </div>
@@ -1040,15 +1219,16 @@ function renderDrugs(p){
       <div class="drug-row multi">
         <div class="dr-top">
           <div><span class="dr-name">Neostigmine + Glycopyrrolate</span><span class="dr-route">IV</span>
-            <div class="dr-basis">Neo: 50 mcg/kg (max 2.5 mg) · Glyco: 10 mcg/kg (max 200 mcg) · dosed on ${dwSrc}</div>
+            <div class="dr-basis">Neo: 50–70 mcg/kg (max 2.5 mg) · Glyco: 4 mcg/kg (max 200 mcg) · dosed on ${dwSrc}</div>
             ${neoCap ? '<div class="dr-cap">⚠ Neostigmine capped at 2.5 mg</div>' : ''}
             ${glycoCap ? '<div class="dr-cap">⚠ Glycopyrrolate capped at 200 mcg</div>' : ''}
           </div>
           <div class="dr-right">
             <div class="dr-doses">
-              <div class="dr-dose-line"><span class="dr-dose-lbl">Neo</span><span class="dr-dose">${neoD}<span class="du">mg</span></span></div>
+              <div class="dr-dose-line"><span class="dr-dose-lbl">Neo</span><span class="dr-dose">${neoMin}${neoMin!==neoMax?'–'+neoMax:''}<span class="du">mg</span></span></div>
               <div class="dr-dose-line"><span class="dr-dose-lbl">Glyco</span><span class="dr-dose">${glycoD}<span class="du">mcg</span></span></div>
             </div>
+            <div class="dr-vol" style="text-align:right;">${neoVolMin}${neoVolMin!==neoVolMax?'–'+neoVolMax:''} mL Neo · ${glycoVol} mL Glyco</div>
           </div>
         </div>
       </div>
@@ -1086,20 +1266,6 @@ function renderDrugs(p){
       </div>
       <div class="drug-row">
         <div class="dr-top">
-          <div><span class="dr-name">Paracetamol</span><span class="dr-route">IV</span>
-            <div class="dr-basis">${paracDw < 10 ? '7.5 mg/kg (&lt;10 kg)' : '15 mg/kg'} · 10 mg/mL · max 1000 mg · dosed on ${dwSrc}</div>
-            ${paracCap ? '<div class="dr-cap">⚠ Capped at 1000 mg</div>' : ''}
-            ${obese ? '<div class="dr-ibw-note">IBW dosing — avoid hepatotoxic overdose in obesity</div>' : ''}
-          </div>
-          <div class="dr-right">
-            <div class="dr-dose">${paracDose}<span class="du">mg</span></div>
-            <div class="dr-vol">${paracVol} mL of 10 mg/mL</div>
-            ${actualNoteFixed(paracActDose, 'mg')}
-          </div>
-        </div>
-      </div>
-      <div class="drug-row">
-        <div class="dr-top">
           <div><span class="dr-name">Ondansetron</span><span class="dr-route">IV</span>
             <div class="dr-basis">0.1 mg/kg · 2 mg/mL · max 4 mg</div>
             ${ondanCap ? '<div class="dr-cap">⚠ Capped at 4 mg</div>' : ''}
@@ -1112,9 +1278,15 @@ function renderDrugs(p){
       </div>
       <div class="drug-row">
         <div class="dr-top">
-          <div><span class="dr-name">Dexamethasone</span><span class="dr-route">IV</span>
-            <div class="dr-basis">0.15 mg/kg · 4 mg/mL · max 8 mg</div>
+          <div>
+            <span class="dr-name">Dexamethasone</span><span class="dr-route">IV</span>
+            <div class="dr-basis">${dexaPerKg} mg/kg · 4 mg/mL · max 8 mg</div>
             ${dexaCap ? '<div class="dr-cap">⚠ Capped at 8 mg</div>' : ''}
+            <div class="dose-pills-label">Dose:</div>
+            <div class="dose-pills">
+              <button class="dose-pill ${drugState.dexaDose===0.15?'active':''}" data-drug="dexa" data-dose="0.15">0.15 mg/kg</button>
+              <button class="dose-pill ${drugState.dexaDose===0.2?'active':''}" data-drug="dexa" data-dose="0.2">0.2 mg/kg</button>
+            </div>
           </div>
           <div class="dr-right">
             <div class="dr-dose">${dexaD}<span class="du">mg</span></div>
@@ -1124,21 +1296,45 @@ function renderDrugs(p){
       </div>
       <div class="drug-row multi">
         <div class="dr-top">
-          <div><span class="dr-name">Midazolam</span><span class="dr-route">Oral / IV</span>
-            <div class="dr-basis">Oral: 0.5 mg/kg (max 15 mg) actual wt · IV: 0.05–0.1 mg/kg · IV dosed on ${dwSrc}</div>
-            ${midazOralCap ? '<div class="dr-cap">⚠ Oral dose capped at 15 mg</div>' : ''}
+          <div><span class="dr-name">Midazolam</span><span class="dr-route">IV</span>
+            <div class="dr-basis">0.05–0.1 mg/kg IV · dosed on ${dwSrc}</div>
             ${obese ? '<div class="dr-ibw-note">IV dose on IBW — benzodiazepines have limited adipose distribution</div>' : ''}
           </div>
           <div class="dr-right">
-            <div class="dr-doses">
-              <div class="dr-dose-line"><span class="dr-dose-lbl">Oral</span><span class="dr-dose">${midazOral}<span class="du">mg</span></span></div>
-              <div class="dr-dose-line"><span class="dr-dose-lbl">IV</span><span class="dr-dose">${midazIVMin}–${midazIVMax}<span class="du">mg</span></span></div>
-            </div>
-            ${obese ? `<div class="dr-actual-note">IV actual wt: ${midazActIVMin}–${midazActIVMax} mg</div>` : ''}
+            <div class="dr-dose">${midazIVMin}–${midazIVMax}<span class="du">mg</span></div>
+            ${obese ? `<div class="dr-actual-note">Actual wt: ${midazActIVMin}–${midazActIVMax} mg</div>` : ''}
           </div>
         </div>
       </div>
     </div>
+
+    <div class="drug-group-label">Antibiotics</div>
+    <div class="drug-list">
+      <div class="drug-row">
+        <div class="dr-top">
+          <div><span class="dr-name">Piperacillin-Tazobactam</span><span class="dr-route">IV</span>
+            <div class="dr-basis">90 mg/kg · max 4.5 g · infuse over 30 min</div>
+            ${pipTazCap ? '<div class="dr-cap">⚠ Capped at 4500 mg (4.5 g)</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${pipTazD}<span class="du">mg</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="drug-row">
+        <div class="dr-top">
+          <div><span class="dr-name">Co-Amoxiclav</span><span class="dr-route">IV</span>
+            <div class="dr-basis">30 mg/kg (amoxicillin component) · 1.2 g in 20 mL (60 mg/mL) · max 1000 mg · infuse over 30 min</div>
+            ${coAmoxCap ? '<div class="dr-cap">⚠ Capped at 1000 mg</div>' : ''}
+          </div>
+          <div class="dr-right">
+            <div class="dr-dose">${coAmoxD}<span class="du">mg</span></div>
+            <div class="dr-vol">${coAmoxVol} mL of 60 mg/mL</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="airway-note" style="margin-top:14px;">Doses calculated from ${obese ? `IBW (${p.ibw} kg) for weight-dependent drugs; actual weight (${w} kg) for suxamethonium and atropine` : wSrc}. Concentrations shown are common preparations — confirm local availability. These are starting doses; titrate to clinical effect.</div>
   `;
 }
@@ -1784,6 +1980,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
   });
+});
+
+// ============================================================
+// DOSE PILL SELECTION
+// ============================================================
+document.getElementById('drugsContent').addEventListener('click', function(e){
+  const pill = e.target.closest('.dose-pill');
+  if(!pill) return;
+  const drug = pill.dataset.drug;
+  const dose = pill.dataset.dose;
+  if(drug === 'dexa') drugState.dexaDose = parseFloat(dose);
+  else if(drug === 'parac') drugState.paracMode = dose;
+  else if(drug === 'midazPO') drugState.midazPODose = parseFloat(dose);
+  renderDrugs(getPatient());
 });
 
 // ============================================================
